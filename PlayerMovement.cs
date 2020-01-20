@@ -73,12 +73,11 @@ public class PlayerMovement : MonoBehaviour {
         x = Input.GetAxisRaw("Horizontal");
         y = Input.GetAxisRaw("Vertical");
         jumping = Input.GetButton("Jump");
-        crouching = Input.GetButton("Crouch");
         
         //Crouching
-        if (Input.GetButtonDown("Crouch"))
+        if (Input.GetKeyDown(KeyCode.LeftControl))
             StartCrouch();
-        if (Input.GetButtonUp("Crouch"))
+        if (Input.GetKeyUp(KeyCode.LeftControl))
             StopCrouch();
     }
 
