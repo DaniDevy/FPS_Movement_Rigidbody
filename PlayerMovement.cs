@@ -9,9 +9,10 @@ public class PlayerMovement : MonoBehaviour {
     //Assingables
     public Transform playerCam;
     public Transform orientation;
+    BoxCollider feet;
 
     //Rotation and look
-    float xRotation;
+    float xRotation = 0;
     const float sensitivity = 50f;
 
     //Movement
@@ -20,13 +21,14 @@ public class PlayerMovement : MonoBehaviour {
     bool grounded;
 
     const float threshold = 0.01f;
-    public float friction = 0.175f;
-    public float maxSlopeAngle = 35f;
+    public float maxSlopeAngle = 45f;
 
     //Crouch & Slide
     Vector3 crouchScale = new Vector3(1, 0.5f, 1);
     Vector3 playerScale;
     public float slideForce = 400;
+
+    public float friction = 0.175f;
     public float slideFriction = 0.2f;
 
     //Jumping
@@ -40,6 +42,7 @@ public class PlayerMovement : MonoBehaviour {
     Vector3 normalVector = Vector3.up;
 
     void Awake() {
+        feet = GetComponent<BoxCollider>();
         rigidBody = GetComponent<Rigidbody>();
     }
 
@@ -70,6 +73,7 @@ public class PlayerMovement : MonoBehaviour {
         inputDirection.y = Input.GetAxisRaw("Vertical");
         inputDirection.Normalize();
 
+
         if (Input.GetButton("Jump"))
         {
             Jump();
@@ -80,6 +84,8 @@ public class PlayerMovement : MonoBehaviour {
             StartCrouch();
         if (Input.GetKeyUp(KeyCode.LeftControl))
             StopCrouch();
+
+        feet.enabled = inputDirection.magnitude == 0 && !crouching;
     }
 
     void StartCrouch() {
@@ -107,8 +113,7 @@ public class PlayerMovement : MonoBehaviour {
     }
 
     void Movement() {
-        // Extra gravity
-        rigidBody.AddForce(Vector3.down * Time.deltaTime * 10);
+        rigidBody.AddForce(Vector3.down * 10 * Time.deltaTime);
 
         ApplyFriction();
 
@@ -148,7 +153,6 @@ public class PlayerMovement : MonoBehaviour {
         if (grounded)
         {
             grounded = false;
-            //Add jump forces
             rigidBody.AddForce(normalVector * jumpForce);
         }
     }
@@ -159,15 +163,15 @@ public class PlayerMovement : MonoBehaviour {
 
         //Find current look rotation
         Vector3 rot = playerCam.transform.localRotation.eulerAngles;
-        float desiredX = rot.y + mouseX;
+        float desiredY = rot.y + mouseX;
 
         //Rotate, and also make sure we dont over- or under-rotate.
         xRotation -= mouseY;
         xRotation = Mathf.Clamp(xRotation, -90f, 90f);
 
         //Perform the rotations
-        playerCam.transform.localRotation = Quaternion.Euler(xRotation, desiredX, 0);
-        orientation.transform.localRotation = Quaternion.Euler(0, desiredX, 0);
+        playerCam.transform.localRotation = Quaternion.Euler(xRotation, desiredY, 0);
+        orientation.transform.localRotation = Quaternion.Euler(0, desiredY, 0);
     }
 
     void ApplyFriction() {
@@ -196,6 +200,8 @@ public class PlayerMovement : MonoBehaviour {
         return angle < maxSlopeAngle;
     }
 
+    bool cancellingGrounded;
+
     /// <summary>
     /// Handle ground detection
     /// </summary>
@@ -213,7 +219,21 @@ public class PlayerMovement : MonoBehaviour {
             {
                 grounded = true;
                 normalVector = normal;
+                cancellingGrounded = false;
+                CancelInvoke(nameof(StopGrounded));
             }
         }
+
+        //Invoke ground/wall cancel, since we can't check normals with CollisionExit
+        if (!cancellingGrounded)
+        {
+            cancellingGrounded = true;
+            Invoke(nameof(StopGrounded), Time.deltaTime);
+        }
+    }
+
+    private void StopGrounded()
+    {
+        grounded = false;
     }
 }
