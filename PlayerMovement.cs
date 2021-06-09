@@ -46,6 +46,21 @@ public class PlayerMovement : MonoBehaviour {
     private Vector3 normalVector = Vector3.up;
     private Vector3 wallNormalVector;
 
+    //Wallrunning
+    public bool wallRunning;
+    private Vector3 wallRunPos;
+    private float actualWallRotation;
+	private float wallRotationVel;
+	private float desiredX;
+	private bool cancelling;
+    private bool readyToWallrun = true;
+	private float wallRunGravity = 1f;
+    private float wallRunRotation;
+    private bool surfing;
+	private bool cancellingGrounded;
+	private bool cancellingWall;
+	private bool cancellingSurf;
+
     void Awake() {
         rb = GetComponent<Rigidbody>();
     }
@@ -55,7 +70,10 @@ public class PlayerMovement : MonoBehaviour {
         Cursor.lockState = CursorLockMode.Locked;
         Cursor.visible = false;
     }
-
+    private void LateUpdate()
+	{
+		WallRunning();
+	}
     
     private void FixedUpdate() {
         Movement();
@@ -165,23 +183,23 @@ public class PlayerMovement : MonoBehaviour {
     private void ResetJump() {
         readyToJump = true;
     }
-    
-    private float desiredX;
     private void Look() {
         float mouseX = Input.GetAxis("Mouse X") * sensitivity * Time.fixedDeltaTime * sensMultiplier;
         float mouseY = Input.GetAxis("Mouse Y") * sensitivity * Time.fixedDeltaTime * sensMultiplier;
 
         //Find current look rotation
         Vector3 rot = playerCam.transform.localRotation.eulerAngles;
-        desiredX = rot.y + mouseX;
+        desiredX = playerCam.transform.localRotation.eulerAngles.y + mouseX;
         
         //Rotate, and also make sure we dont over- or under-rotate.
         xRotation -= mouseY;
         xRotation = Mathf.Clamp(xRotation, -90f, 90f);
 
         //Perform the rotations
-        playerCam.transform.localRotation = Quaternion.Euler(xRotation, desiredX, 0);
-        orientation.transform.localRotation = Quaternion.Euler(0, desiredX, 0);
+        FindWallRunRotation();
+		actualWallRotation = Mathf.SmoothDamp(actualWallRotation, wallRunRotation, ref wallRotationVel, 0.2f);
+        playerCam.transform.localRotation = Quaternion.Euler(xRotation, desiredX, actualWallRotation);
+		orientation.transform.localRotation = Quaternion.Euler(0f, desiredX, 0f);		
     }
 
     private void CounterMovement(float x, float y, Vector2 mag) {
@@ -215,56 +233,190 @@ public class PlayerMovement : MonoBehaviour {
     /// </summary>
     /// <returns></returns>
     public Vector2 FindVelRelativeToLook() {
-        float lookAngle = orientation.transform.eulerAngles.y;
-        float moveAngle = Mathf.Atan2(rb.velocity.x, rb.velocity.z) * Mathf.Rad2Deg;
-
-        float u = Mathf.DeltaAngle(lookAngle, moveAngle);
-        float v = 90 - u;
-
-        float magnitue = rb.velocity.magnitude;
-        float yMag = magnitue * Mathf.Cos(u * Mathf.Deg2Rad);
-        float xMag = magnitue * Mathf.Cos(v * Mathf.Deg2Rad);
-        
-        return new Vector2(xMag, yMag);
+        float current = orientation.transform.eulerAngles.y;
+		float target = Mathf.Atan2(rb.velocity.x, rb.velocity.z) * 57.29578f;
+		float num = Mathf.DeltaAngle(current, target);
+		float num2 = 90f - num;
+		float magnitude = new Vector3(rb.velocity.x, 0, rb.velocity.z).magnitude;
+		return new Vector2(y: magnitude * Mathf.Cos(num * ((float)Math.PI / 180f)), x: magnitude * Mathf.Cos(num2 * ((float)Math.PI / 180f)));
     }
 
-    private bool IsFloor(Vector3 v) {
-        float angle = Vector3.Angle(Vector3.up, v);
-        return angle < maxSlopeAngle;
-    }
+    private void FindWallRunRotation()
+	{
+		if (!wallRunning)
+		{
+			wallRunRotation = 0f;
+			return;
+		}
+		_ = new Vector3(0f, playerCam.transform.rotation.y, 0f).normalized;
+		new Vector3(0f, 0f, 1f);
+		float num = 0f;
+		float current = playerCam.transform.rotation.eulerAngles.y;
+		if (Math.Abs(wallNormalVector.x - 1f) < 0.1f)
+		{
+			num = 90f;
+		}
+		else if (Math.Abs(wallNormalVector.x - -1f) < 0.1f)
+		{
+			num = 270f;
+		}
+		else if (Math.Abs(wallNormalVector.z - 1f) < 0.1f)
+		{
+			num = 0f;
+		}
+		else if (Math.Abs(wallNormalVector.z - -1f) < 0.1f)
+		{
+			num = 180f;
+		}
+		num = Vector3.SignedAngle(new Vector3(0f, 0f, 1f), wallNormalVector, Vector3.up);
+		float num2 = Mathf.DeltaAngle(current, num);
+		wallRunRotation = (0f - num2 / 90f) * 15f;
+		if (!readyToWallrun)
+		{
+			return;
+		}
+		if ((Mathf.Abs(wallRunRotation) < 4f && y > 0f && Math.Abs(x) < 0.1f) || (Mathf.Abs(wallRunRotation) > 22f && y < 0f && Math.Abs(x) < 0.1f))
+		{
+			if (!cancelling)
+			{
+				cancelling = true;
+				CancelInvoke("CancelWallrun");
+				Invoke("CancelWallrun", 0.2f);
+			}
+		}
+		else
+		{
+			cancelling = false;
+			CancelInvoke("CancelWallrun");
+		}
+	}
 
-    private bool cancellingGrounded;
-    
-    /// <summary>
-    /// Handle ground detection
-    /// </summary>
-    private void OnCollisionStay(Collision other) {
-        //Make sure we are only checking for walkable layers
-        int layer = other.gameObject.layer;
-        if (whatIsGround != (whatIsGround | (1 << layer))) return;
+	private void CancelWallrun()
+	{
+		Invoke("GetReadyToWallrun", 0.1f);
+		rb.AddForce(wallNormalVector * 600f);
+		readyToWallrun = false;
+	}
 
-        //Iterate through every collision in a physics update
-        for (int i = 0; i < other.contactCount; i++) {
-            Vector3 normal = other.contacts[i].normal;
-            //FLOOR
-            if (IsFloor(normal)) {
-                grounded = true;
-                cancellingGrounded = false;
-                normalVector = normal;
-                CancelInvoke(nameof(StopGrounded));
-            }
-        }
+	private void GetReadyToWallrun()
+	{
+		readyToWallrun = true;
+	}
 
-        //Invoke ground/wall cancel, since we can't check normals with CollisionExit
-        float delay = 3f;
-        if (!cancellingGrounded) {
-            cancellingGrounded = true;
-            Invoke(nameof(StopGrounded), Time.deltaTime * delay);
-        }
-    }
+	private void WallRunning()
+	{
+		if (wallRunning)
+		{
+			rb.AddForce(-wallNormalVector * Time.deltaTime * moveSpeed);
+			rb.AddForce(Vector3.up * Time.deltaTime * rb.mass * 100f * wallRunGravity);
+		}
+	}
 
-    private void StopGrounded() {
-        grounded = false;
-    }
-    
+	private bool IsFloor(Vector3 v)
+	{
+		return Vector3.Angle(Vector3.up, v) < maxSlopeAngle;
+	}
+
+	private bool IsSurf(Vector3 v)
+	{
+		float num = Vector3.Angle(Vector3.up, v);
+		if (num < 80f)
+		{
+			return num > maxSlopeAngle;
+		}
+		return false;
+	}
+
+	private bool IsWall(Vector3 v)
+	{
+		return Math.Abs(81f - Vector3.Angle(Vector3.up, v)) > .1f;
+	}
+
+	private bool IsRoof(Vector3 v)
+	{
+		return v.y == -1f;
+	}
+
+	private void StartWallRun(Vector3 normal)
+	{
+		if (!grounded && readyToWallrun)
+		{
+			wallNormalVector = normal;
+			float d = 20f;
+			if (!wallRunning)
+			{
+				rb.velocity = new Vector3(rb.velocity.x, 0f, rb.velocity.z);
+				rb.AddForce(Vector3.up * d, ForceMode.Impulse);
+			}
+			wallRunning = true;
+		}
+	}
+
+	private void OnCollisionStay(Collision other)
+	{
+		int layer = other.gameObject.layer;
+		if ((int)whatIsGround != ((int)whatIsGround | (1 << layer)))
+		{
+			return;
+		}
+		for (int i = 0; i < other.contactCount; i++)
+		{
+			Vector3 normal = other.contacts[i].normal;
+			if (IsFloor(normal))
+			{
+				if (wallRunning)
+				{
+					wallRunning = false;
+				}
+				grounded = true;
+				normalVector = normal;
+				cancellingGrounded = false;
+				CancelInvoke("StopGrounded");
+			}
+			if (IsWall(normal) && layer == LayerMask.NameToLayer("Ground"))
+			{
+				StartWallRun(normal);
+				cancellingWall = false;
+				CancelInvoke("StopWall");
+			}
+			if (IsSurf(normal))
+			{
+				surfing = true;
+				cancellingSurf = false;
+				CancelInvoke("StopSurf");
+			}
+			IsRoof(normal);
+		}
+		float num = 3f;
+		if (!cancellingGrounded)
+		{
+			cancellingGrounded = true;
+			Invoke("StopGrounded", Time.deltaTime * num);
+		}
+		if (!cancellingWall)
+		{
+			cancellingWall = true;
+			Invoke("StopWall", Time.deltaTime * num);
+		}
+		if (!cancellingSurf)
+		{
+			cancellingSurf = true;
+			Invoke("StopSurf", Time.deltaTime * num);
+		}
+	}
+
+	private void StopGrounded()
+	{
+		grounded = false;
+	}
+
+	private void StopWall()
+	{
+		wallRunning = false;
+	}
+
+	private void StopSurf()
+	{
+		surfing = false;
+	}    
 }
